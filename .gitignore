@@ -1,0 +1,11 @@
+.project
+.pydevproject
+.idea/*
+*.iml
+build/*
+updatedist.egg-info/*
+*.pyc
+*.egg
+.tmp_*
+*.dmp
+*.wpr
