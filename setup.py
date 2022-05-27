@@ -9,6 +9,6 @@ setup(
         'holidays==0.13',
         'numpy==1.19.5',
         'scikit_learn==0.24.2',
-        'psycopg2==2.9.3'
+        'psycopg2-binary==2.9.3'
     ]
 )
