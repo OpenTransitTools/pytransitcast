@@ -10,12 +10,16 @@ import multiprocessing as mp
 
 
 class InferenceRequest(NamedTuple):
+    """An inference request as given to this runner by an external source"""
+
     request_id: str
     timestamp: int
     features: np.ndarray
 
 
 class Job(NamedTuple):
+    """A job for a subprocess to complete, containing the model to run inference on and the input data"""
+
     model: xgb.XGBRegressor
     inference_request: InferenceRequest
 
@@ -35,16 +39,20 @@ class ModelRunner:
         )
 
     def load_relevant_models(self):
+        new_loaded_models = {}
+
         # TODO: only load relevant models
         # By setting this to tomorrow and setting train flag to false we get all models that are currently trained
         tomorrow = datetime.date.today() + datetime.timedelta(days=1)
         models = model_records.get_current_models(self.conn, tomorrow, False)  # type: ignore
-        for model in models:
 
+        for model in models:
             loaded = xgb.XGBRegressor()
             model_bytes = bytearray(model.model_blob)
+            # TODO: might it be more efficient to pickle things here?
             loaded.load_model(model_bytes)
-            self.loaded_models[str(model.ml_model_id)] = loaded
+            new_loaded_models[str(model.ml_model_id)] = loaded
+        self.loaded_models = new_loaded_models
         log.info(f"Loaded {len(self.loaded_models)} models")
 
     def add_job(self, model_id: str, request: InferenceRequest):
@@ -75,6 +83,7 @@ def infer(job: Job):
 
     try:
         result = job.model.predict(job.inference_request.features)
+        # TODO: replace with nats send
         print(result)
     except Exception as e:
         log.error(f"Couldn't infer: {e}")
@@ -84,7 +93,9 @@ def start_runner(conn, runner_process_count: int):
     runner = ModelRunner(conn, runner_process_count)
 
     try:
+        # TODO: run this method periodically, possibly in its own thread
         runner.load_relevant_models()
+        # TODO: replace with NATS subscription
         for i in range(0, 415):
             runner.add_job(
                 str(i),
