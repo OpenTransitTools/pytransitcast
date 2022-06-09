@@ -4,17 +4,22 @@ import logging as log
 
 class Config(object):
     """Configuration parameters"""
-    def __init__(self,
-                 db_user: str,
-                 db_password: str,
-                 db_name: str,
-                 db_host: str,
-                 reattempt_training_days: int):
+
+    def __init__(
+        self,
+        db_user: str,
+        db_password: str,
+        db_name: str,
+        db_host: str,
+        reattempt_training_days: int,
+        runner_process_count: int,
+    ):
         self.db_user = db_user
         self.db_password = db_password
         self.db_name = db_name
         self.db_host = db_host
         self.reattempt_training_days = reattempt_training_days
+        self.runner_process_count = runner_process_count
 
     def __str__(self):
         copy = self.__dict__.copy()
@@ -27,11 +32,18 @@ def load_config() -> Config:
     Reads from variables
     PYTRANSITCAST_DB_USER, PYTRANSITCAST_DB_PASSWORD, PYTRANSITCASTR_DB_NAME and PYTRANSITCAST_DB_HOST"""
     try:
-        return Config(db_user=os.environ['PYTRANSITCAST_DB_USER'],
-                      db_password=os.environ['PYTRANSITCAST_DB_PASSWORD'],
-                      db_name=os.environ['PYTRANSITCAST_DB_NAME'],
-                      db_host=os.environ['PYTRANSITCAST_DB_HOST'],
-                      reattempt_training_days=get_int_environment_variable('PYTRANSITCAST_REATTEMPT_TRAINING_DAYS', 30))
+        return Config(
+            db_user=os.environ["PYTRANSITCAST_DB_USER"],
+            db_password=os.environ["PYTRANSITCAST_DB_PASSWORD"],
+            db_name=os.environ["PYTRANSITCAST_DB_NAME"],
+            db_host=os.environ["PYTRANSITCAST_DB_HOST"],
+            reattempt_training_days=get_int_environment_variable(
+                "PYTRANSITCAST_REATTEMPT_TRAINING_DAYS", 30
+            ),
+            runner_process_count=get_int_environment_variable(
+                "PYTRANSITCAST_RUNNER_PROCESS_COUNT", 4
+            ),
+        )
     except KeyError as e:
         log.warning(f"Unable to load configuration, missing parameters %{e}")
         exit(1)
