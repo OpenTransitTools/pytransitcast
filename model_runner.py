@@ -1,17 +1,19 @@
-from cmath import inf
-from nats.aio.client import Client as NATS
-import json
 import asyncio
-from nats.errors import TimeoutError
-from typing import NamedTuple
 import datetime
+import json
 import logging as log
 import model_records
+import multiprocessing as mp
+import numpy as np
 import os
 import queue
+import time
 import xgboost as xgb
-import numpy as np
-import multiprocessing as mp
+
+from nats.aio.client import Client as NATS
+from nats.errors import TimeoutError
+from typing import NamedTuple
+from typing import Union
 
 
 class InferenceRequest(NamedTuple):
@@ -89,20 +91,24 @@ def queue_handler(queue: queue.Queue):
     log.info(f"Launching thread {os.getpid()}")
     while True:
         job = queue.get()
-        log.info(f"Thread {os.getpid()} starting new job")
+        log.info(
+            f"Thread {os.getpid()} starting new job {job.inference_request.request_id}"
+        )
         infer(job)
 
 
 def infer(job: Job):
     """The method run by the subprocess which does the correct inference"""
 
-    async def send_msg(nats_host: str, response: InferenceResponse):
+    async def send_msg(r: InferenceResponse):
         nc = NATS()
         await nc.connect(job.nats_host)
         await nc.publish(
-            "transitcast_inference_response", json.dumps(response).encode()
+            "transitcast_inference_response", json.dumps(r._asdict()).encode()
         )
-        response = None  # type: ignore
+        log.info(f"Reponse for request {job.inference_request.request_id} sent")
+
+    response: Union[InferenceResponse, None] = None
 
     try:
         result = job.model.predict(job.inference_request.features)
@@ -110,7 +116,7 @@ def infer(job: Job):
             raise Exception("Invalid result returned from model")
         response = InferenceResponse(
             job.inference_request.request_id,
-            0,
+            int(time.time()),
             str(result[0]),
             "",
         )
@@ -118,13 +124,13 @@ def infer(job: Job):
         log.error(f"Couldn't infer: {e}")
         response = InferenceResponse(
             job.inference_request.request_id,
-            0,
-            -1,
+            int(time.time()),
+            "",
             str(e),
         )
     finally:
         if response is not None:
-            asyncio.run(send_msg(job.nats_host, response._asdict()))
+            asyncio.run(send_msg(response))
 
 
 async def start_nats_listener(nats_host: str, runner):
@@ -136,12 +142,19 @@ async def start_nats_listener(nats_host: str, runner):
             request = InferenceRequest(
                 msg["request_id"], msg["ml_model_id"], np.array([msg["features"]])
             )
+            log.info(
+                f"Recieved inference request with id {msg['request_id']} created at {datetime.datetime.fromtimestamp(msg['timestamp'])}"
+            )
             runner.add_job(
                 request,
                 nats_host,
             )
-        except Exception:
+        except Exception as e:
             log.error(f"Invalid request recieved: {msg}")
+            await nc.publish(
+                "transitcast_inference_response",
+                json.dumps({"error": f"Invalid request recieved: {e}"}).encode(),
+            )
 
     try:
         await nc.connect(nats_host)
