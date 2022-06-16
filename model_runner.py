@@ -1,3 +1,8 @@
+from cmath import inf
+from nats.aio.client import Client as NATS
+import json
+import asyncio
+from nats.errors import TimeoutError
 from typing import NamedTuple
 import datetime
 import logging as log
@@ -13,14 +18,24 @@ class InferenceRequest(NamedTuple):
     """An inference request as given to this runner by an external source"""
 
     request_id: str
-    timestamp: int
+    ml_model_id: int
     features: np.ndarray
+
+
+class InferenceResponse(NamedTuple):
+    """A response given from this module via NATS"""
+
+    request_id: str
+    timestamp: int
+    prediction: str
+    error: str
 
 
 class Job(NamedTuple):
     """A job for a subprocess to complete, containing the model to run inference on and the input data"""
 
     model: xgb.XGBRegressor
+    nats_host: str
     inference_request: InferenceRequest
 
 
@@ -55,13 +70,13 @@ class ModelRunner:
         self.loaded_models = new_loaded_models
         log.info(f"Loaded {len(self.loaded_models)} models")
 
-    def add_job(self, model_id: str, request: InferenceRequest):
+    def add_job(self, request: InferenceRequest, nats_host: str):
         try:
-            loaded_model = self.loaded_models[model_id]
+            loaded_model = self.loaded_models[request.ml_model_id]
         except Exception as e:
-            log.warn(f"Model {model_id} couldn't be loaded: {e}")
+            log.warn(f"Model {request.ml_model_id} couldn't be loaded: {e}")
             return
-        self.queue.put(Job(loaded_model, request))
+        self.queue.put(Job(loaded_model, nats_host, request))
 
     def tear_down(self):
         log.info("Tearing down")
@@ -81,30 +96,74 @@ def queue_handler(queue: queue.Queue):
 def infer(job: Job):
     """The method run by the subprocess which does the correct inference"""
 
+    async def send_msg(nats_host: str, response: InferenceResponse):
+        nc = NATS()
+        await nc.connect(job.nats_host)
+        await nc.publish(
+            "transitcast_inference_response", json.dumps(response).encode()
+        )
+        response = None  # type: ignore
+
     try:
         result = job.model.predict(job.inference_request.features)
-        # TODO: replace with nats send
-        print(result)
+        if len(result) < 1:
+            raise Exception("Invalid result returned from model")
+        response = InferenceResponse(
+            job.inference_request.request_id,
+            0,
+            str(result[0]),
+            "",
+        )
     except Exception as e:
         log.error(f"Couldn't infer: {e}")
+        response = InferenceResponse(
+            job.inference_request.request_id,
+            0,
+            -1,
+            str(e),
+        )
+    finally:
+        if response is not None:
+            asyncio.run(send_msg(job.nats_host, response._asdict()))
 
 
-def start_runner(conn, runner_process_count: int):
+async def start_nats_listener(nats_host: str, runner):
+    nc = NATS()
+
+    async def nats_message_handler(message):
+        msg = json.loads(message.data.decode())
+        try:
+            request = InferenceRequest(
+                msg["request_id"], msg["ml_model_id"], np.array([msg["features"]])
+            )
+            runner.add_job(
+                request,
+                nats_host,
+            )
+        except Exception:
+            log.error(f"Invalid request recieved: {msg}")
+
+    try:
+        await nc.connect(nats_host)
+        await nc.subscribe("transitcast_inference_request", cb=nats_message_handler)
+    except TimeoutError:
+        log.error(f"Could not connect to NATS: Request to {nats_host} timed out")
+
+
+def start_runner(conn, runner_process_count: int, nats_host: str):
     runner = ModelRunner(conn, runner_process_count)
 
     try:
         # TODO: run this method periodically, possibly in its own thread
         runner.load_relevant_models()
-        # TODO: replace with NATS subscription
-        for i in range(0, 415):
-            runner.add_job(
-                str(i),
-                InferenceRequest(
-                    "0", 0, np.array([[5, 1, 12, 20, 50, 0, 0, 0, 100, 40, 0, 0]])
-                ),
-            )
+
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(start_nats_listener(nats_host, runner))
+        loop.run_forever()
+        loop.close()
+
     except Exception as e:
-        log.error(f"An unhandled error has occured: {e}")
+        log.error(f"An unhandled error has occured while loading models: {e}")
     finally:
         log.info(f"Closing threads...")
         runner.tear_down()
