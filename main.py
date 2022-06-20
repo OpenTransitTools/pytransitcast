@@ -48,4 +48,6 @@ if __name__ == "__main__":
     log.info(f"Using config: {config}")
 
     if args.mode == "train":
-        train()
+        train(config)
+    if args.mode == "infer":
+        infer(config)
