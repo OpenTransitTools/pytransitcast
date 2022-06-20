@@ -11,7 +11,6 @@ import time
 import xgboost as xgb
 
 from nats.aio.client import Client as NATS
-from nats.errors import TimeoutError
 from typing import NamedTuple
 from typing import Union
 
@@ -21,6 +20,7 @@ class InferenceRequest(NamedTuple):
 
     request_id: str
     ml_model_id: int
+    version: int
     features: np.ndarray
 
 
@@ -68,16 +68,21 @@ class ModelRunner:
             model_bytes = bytearray(model.model_blob)
             # TODO: might it be more efficient to pickle things here?
             loaded.load_model(model_bytes)
-            new_loaded_models[str(model.ml_model_id)] = loaded
+            new_loaded_models[
+                str(model.ml_model_id) + "_" + str(model.version)
+            ] = loaded
         self.loaded_models = new_loaded_models
         log.info(f"Loaded {len(self.loaded_models)} models")
 
     def add_job(self, request: InferenceRequest, nats_host: str):
         try:
-            loaded_model = self.loaded_models[request.ml_model_id]
+            loaded_model = self.loaded_models[
+                str(request.ml_model_id) + "_" + str(request.version)
+            ]
         except Exception as e:
-            log.warn(f"Model {request.ml_model_id} couldn't be loaded: {e}")
-            return
+            raise Exception(
+                f"Model {request.ml_model_id} version {request.version} couldn't be loaded: {e}"
+            )
         self.queue.put(Job(loaded_model, nats_host, request))
 
     def tear_down(self):
@@ -121,7 +126,9 @@ def infer(job: Job):
             "",
         )
     except Exception as e:
-        log.error(f"Couldn't infer: {e}")
+        log.error(
+            f"Error processing request {job.inference_request.request_id}: Couldn't infer: {e}"
+        )
         response = InferenceResponse(
             job.inference_request.request_id,
             int(time.time()),
@@ -140,7 +147,10 @@ async def start_nats_listener(nats_host: str, runner):
         msg = json.loads(message.data.decode())
         try:
             request = InferenceRequest(
-                msg["request_id"], msg["ml_model_id"], np.array([msg["features"]])
+                msg["request_id"],
+                msg["ml_model_id"],
+                msg["version"],
+                np.array([msg["features"]]),
             )
             log.info(
                 f"Recieved inference request with id {msg['request_id']} created at {datetime.datetime.fromtimestamp(msg['timestamp'])}"
@@ -151,6 +161,7 @@ async def start_nats_listener(nats_host: str, runner):
             )
         except Exception as e:
             log.error(f"Invalid request recieved: {msg}")
+            log.error(e)
             await nc.publish(
                 "transitcast_inference_response",
                 json.dumps({"error": f"Invalid request recieved: {e}"}).encode(),
