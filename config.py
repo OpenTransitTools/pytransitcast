@@ -14,6 +14,7 @@ class Config(object):
         reattempt_training_days: int,
         runner_process_count: int,
         nats_host: str,
+        rmse_margin: int,
     ):
         self.db_user = db_user
         self.db_password = db_password
@@ -22,6 +23,7 @@ class Config(object):
         self.reattempt_training_days = reattempt_training_days
         self.runner_process_count = runner_process_count
         self.nats_host = nats_host
+        self.rmse_margin = rmse_margin
 
     def __str__(self):
         copy = self.__dict__.copy()
@@ -46,6 +48,7 @@ def load_config() -> Config:
                 "PYTRANSITCAST_RUNNER_PROCESS_COUNT", 4
             ),
             nats_host=os.environ["PYTRANSITCAST_NATS_HOST"],
+            rmse_margin=get_int_environment_variable("PYTRANSITCAST_RMSE_MARGIN", 0),
         )
     except KeyError as e:
         log.warning(f"Unable to load configuration, missing parameters %{e}")

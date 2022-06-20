@@ -55,13 +55,10 @@ class ModelRunner:
             (self.queue,),
         )
 
-    def load_relevant_models(self):
+    def load_relevant_models(self, rmse_margin: int):
         new_loaded_models = {}
 
-        # TODO: only load relevant models
-        # By setting this to tomorrow and setting train flag to false we get all models that are currently trained
-        tomorrow = datetime.date.today() + datetime.timedelta(days=1)
-        models = model_records.get_current_models(self.conn, tomorrow, False)  # type: ignore
+        models = model_records.get_relevant_models(self.conn, rmse_margin)
 
         for model in models:
             loaded = xgb.XGBRegressor()
@@ -174,12 +171,12 @@ async def start_nats_listener(nats_host: str, runner):
         log.error(f"Could not connect to NATS: Request to {nats_host} timed out")
 
 
-def start_runner(conn, runner_process_count: int, nats_host: str):
+def start_runner(conn, runner_process_count: int, nats_host: str, rmse_margin: int):
     runner = ModelRunner(conn, runner_process_count)
 
     try:
         # TODO: run this method periodically, possibly in its own thread
-        runner.load_relevant_models()
+        runner.load_relevant_models(rmse_margin)
 
         loop = asyncio.get_event_loop()
         loop.run_until_complete(start_nats_listener(nats_host, runner))
