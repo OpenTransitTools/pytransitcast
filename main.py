@@ -20,7 +20,6 @@ def train(config):
     reattempt_date = now - datetime.timedelta(days=config.reattempt_training_days)
     end_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-    conn = data_loader.connect(config)
     model_trainer.train_pending_models(conn, start_date, end_date, reattempt_date)
 
 
