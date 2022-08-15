@@ -6,6 +6,7 @@ from typing import Dict, List
 
 class MLModelType:
     """Holds records from ml_model_type table, each row is a type of model"""
+
     def __init__(self,
                  ml_model_type_id: int,
                  name: str):
@@ -15,6 +16,7 @@ class MLModelType:
 
 class MLModelStops:
     """Holds records from ml_model_stops table, each row is an instance of stop to stop movement to be trained with"""
+
     def __init__(self, ml_model_stop_id: int,
                  ml_model_id: int,
                  sequence: int,
@@ -40,6 +42,7 @@ def ml_model_stops_name(model_stop_list: [MLModelStops]) -> str:
 
 class MLModel:
     """Holds records from ml_Model table, each row is an instance of a model to be trained"""
+
     def __init__(self,
                  ml_model_id: int,
                  version: int,
@@ -165,6 +168,7 @@ where current_timestamp between start_timestamp and end_timestamp
     cursor.close()
     return results
 
+
 def get_relevant_models(conn, rmse_margin: int) -> [MLModel]:
     """retrieves all relevant MLModels that are usable for inference, where the model rmse is higher
     than the average rmse by the specified margin."""
@@ -189,7 +193,7 @@ def get_relevant_models(conn, rmse_margin: int) -> [MLModel]:
 from ml_model
 where trained_timestamp is not null
                          and train_flag = False
-                         and ml_rmse - avg_rmse > %s"""
+                         and avg_rmse - ml_rmse > %s"""
 
     cursor = conn.cursor()
     log.info(f"Issuing query `{query}` with args {rmse_margin}")
@@ -206,7 +210,6 @@ where trained_timestamp is not null
         row = cursor.fetchone()
     cursor.close()
     return results
-
 
 
 def update_model_record(conn, model_record: MLModel):
