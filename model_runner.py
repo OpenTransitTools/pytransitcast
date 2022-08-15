@@ -29,7 +29,7 @@ class InferenceResponse(NamedTuple):
 
     request_id: str
     timestamp: int
-    prediction: str
+    prediction: float
     error: str
 
 
@@ -106,9 +106,9 @@ def infer(job: Job):
         nc = NATS()
         await nc.connect(job.nats_host)
         await nc.publish(
-            "transitcast_inference_response", json.dumps(r._asdict()).encode()
+            "inference-response", json.dumps(r._asdict()).encode()
         )
-        log.info(f"Reponse for request {job.inference_request.request_id} sent")
+        log.info(f"Response for request {job.inference_request.request_id} sent")
 
     response: Union[InferenceResponse, None] = None
 
@@ -119,7 +119,7 @@ def infer(job: Job):
         response = InferenceResponse(
             job.inference_request.request_id,
             int(time.time()),
-            str(result[0]),
+            result[0].astype(float),
             "",
         )
     except Exception as e:
@@ -129,7 +129,7 @@ def infer(job: Job):
         response = InferenceResponse(
             job.inference_request.request_id,
             int(time.time()),
-            "",
+            0.0,
             str(e),
         )
     finally:
@@ -150,23 +150,23 @@ async def start_nats_listener(nats_host: str, runner):
                 np.array([msg["features"]]),
             )
             log.info(
-                f"Recieved inference request with id {msg['request_id']} created at {datetime.datetime.fromtimestamp(msg['timestamp'])}"
+                f"Received inference request with id {msg['request_id']} created at {datetime.datetime.fromtimestamp(msg['timestamp'])}"
             )
             runner.add_job(
                 request,
                 nats_host,
             )
         except Exception as e:
-            log.error(f"Invalid request recieved: {msg}")
+            log.error(f"Invalid request received: {msg}")
             log.error(e)
             await nc.publish(
-                "transitcast_inference_response",
-                json.dumps({"error": f"Invalid request recieved: {e}"}).encode(),
+                "inference-response",
+                json.dumps({"error": f"Invalid request received: {e}"}).encode(),
             )
 
     try:
         await nc.connect(nats_host)
-        await nc.subscribe("transitcast_inference_request", cb=nats_message_handler)
+        await nc.subscribe("inference-request", cb=nats_message_handler)
     except TimeoutError:
         log.error(f"Could not connect to NATS: Request to {nats_host} timed out")
 
@@ -184,7 +184,7 @@ def start_runner(conn, runner_process_count: int, nats_host: str, rmse_margin: i
         loop.close()
 
     except Exception as e:
-        log.error(f"An unhandled error has occured while loading models: {e}")
+        log.error(f"An unhandled error has occurred while loading models: {e}")
     finally:
         log.info(f"Closing threads...")
         runner.tear_down()
