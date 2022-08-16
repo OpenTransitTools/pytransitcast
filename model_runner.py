@@ -11,7 +11,9 @@ import time
 import xgboost as xgb
 
 from nats.aio.client import Client as NATS
+from multiprocessing.connection import Pipe, wait, Connection
 from typing import NamedTuple
+from threading import Thread
 from typing import Union
 
 
@@ -48,12 +50,23 @@ class ModelRunner:
         self.conn = conn
         self.loaded_models = {}
         self.queue = mp.Queue()
+        self.nc = NATS()
+        self.response_queue = mp.Queue()
 
         self.pool = mp.Pool(
             thread_count,
             queue_handler,
-            (self.queue,),
+            (self.queue, self.response_queue,),
         )
+
+    async def send_nats_msgs(self):
+        while True:
+            response = self.response_queue.get()
+            log.info(
+                f"got something from the response queue"
+            )
+            await self.nc.publish("inference-response", json.dumps(response._asdict()).encode())
+            log.info(f"Response for request {response.request_id} sent")
 
     def load_relevant_models(self, rmse_margin: int):
         new_loaded_models = {}
@@ -80,7 +93,8 @@ class ModelRunner:
             raise Exception(
                 f"Model {request.ml_model_id} version {request.version} couldn't be loaded: {e}"
             )
-        self.queue.put(Job(loaded_model, nats_host, request))
+        new_job = Job(loaded_model, nats_host, request)
+        self.queue.put(new_job)
 
     def tear_down(self):
         log.info("Tearing down")
@@ -88,7 +102,7 @@ class ModelRunner:
         self.pool.join()
 
 
-def queue_handler(queue: queue.Queue):
+def queue_handler(queue: queue.Queue, response_queue: queue.Queue):
     """The loop that runs in the subprocess"""
     log.info(f"Launching thread {os.getpid()}")
     while True:
@@ -96,19 +110,12 @@ def queue_handler(queue: queue.Queue):
         log.info(
             f"Thread {os.getpid()} starting new job {job.inference_request.request_id}"
         )
-        infer(job)
+        response = infer(job)
+        response_queue.put(response)
 
 
 def infer(job: Job):
     """The method run by the subprocess which does the correct inference"""
-
-    async def send_msg(r: InferenceResponse):
-        nc = NATS()
-        await nc.connect(job.nats_host)
-        await nc.publish(
-            "inference-response", json.dumps(r._asdict()).encode()
-        )
-        log.info(f"Response for request {job.inference_request.request_id} sent")
 
     response: Union[InferenceResponse, None] = None
 
@@ -122,6 +129,7 @@ def infer(job: Job):
             result[0].astype(float),
             "",
         )
+        # time.sleep(90)
     except Exception as e:
         log.error(
             f"Error processing request {job.inference_request.request_id}: Couldn't infer: {e}"
@@ -134,12 +142,10 @@ def infer(job: Job):
         )
     finally:
         if response is not None:
-            asyncio.run(send_msg(response))
+            return response
 
 
 async def start_nats_listener(nats_host: str, runner):
-    nc = NATS()
-
     async def nats_message_handler(message):
         msg = json.loads(message.data.decode())
         try:
@@ -159,16 +165,22 @@ async def start_nats_listener(nats_host: str, runner):
         except Exception as e:
             log.error(f"Invalid request received: {msg}")
             log.error(e)
-            await nc.publish(
+            await runner.nc.publish(
                 "inference-response",
-                json.dumps({"error": f"Invalid request received: {e}"}).encode(),
+                json.dumps(
+                    {"error": f"Invalid request received: {e}"}).encode(),
             )
 
     try:
-        await nc.connect(nats_host)
-        await nc.subscribe("inference-request", cb=nats_message_handler)
+        await runner.nc.connect(nats_host)
+        await runner.nc.subscribe("inference-request", cb=nats_message_handler)
     except TimeoutError:
-        log.error(f"Could not connect to NATS: Request to {nats_host} timed out")
+        log.error(
+            f"Could not connect to NATS: Request to {nats_host} timed out")
+
+
+def nats_sender_entrypoint(runner):
+    asyncio.run(runner.send_nats_msgs())
 
 
 def start_runner(conn, runner_process_count: int, nats_host: str, rmse_margin: int):
@@ -178,8 +190,12 @@ def start_runner(conn, runner_process_count: int, nats_host: str, rmse_margin: i
         # TODO: run this method periodically, possibly in its own thread
         runner.load_relevant_models(rmse_margin)
 
+        t = Thread(target=nats_sender_entrypoint,
+                   args=(runner, ), daemon=True)
+        t.start()
+
         loop = asyncio.get_event_loop()
-        loop.run_until_complete(start_nats_listener(nats_host, runner))
+        loop.create_task(start_nats_listener(nats_host, runner))
         loop.run_forever()
         loop.close()
 
