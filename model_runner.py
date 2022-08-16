@@ -62,9 +62,6 @@ class ModelRunner:
     async def send_nats_msgs(self):
         while True:
             response = self.response_queue.get()
-            log.info(
-                f"got something from the response queue"
-            )
             await self.nc.publish("inference-response", json.dumps(response._asdict()).encode())
             log.info(f"Response for request {response.request_id} sent")
 
