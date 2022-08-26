@@ -169,7 +169,7 @@ where current_timestamp between start_timestamp and end_timestamp
     return results
 
 
-def get_relevant_models(conn, rmse_margin: int) -> [MLModel]:
+def get_relevant_models(conn, rmse_margin: int, callback):
     """retrieves all relevant MLModels that are usable for inference, where the model rmse is higher
     than the average rmse by the specified margin."""
     query = """select ml_model_id,
@@ -198,7 +198,6 @@ where trained_timestamp is not null
     cursor = conn.cursor()
     log.info(f"Issuing query `{query}` with args {rmse_margin}")
     cursor.execute(query, [rmse_margin])
-    results: [MLModel] = []
     row = cursor.fetchone()
     while row is not None:
         model_blob = None
@@ -206,10 +205,9 @@ where trained_timestamp is not null
             model_blob = bytes(row[17])
         ml_model = MLModel(row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8],
                            row[9], row[10], row[11], row[12], row[13], row[14], row[15], row[16], model_blob)
-        results.append(ml_model)
+        callback(ml_model)
         row = cursor.fetchone()
     cursor.close()
-    return results
 
 
 def update_model_record(conn, model_record: MLModel):

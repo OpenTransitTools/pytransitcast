@@ -5,7 +5,7 @@ import datetime
 import data_loader
 import model_trainer
 import model_runner
-from config import load_config
+import config
 
 # Ignore pandas.Int64Index warnings internal to xgboost.
 warnings.filterwarnings("ignore", "pandas.Int64Index", FutureWarning, "xgboost")
@@ -13,21 +13,18 @@ warnings.filterwarnings("ignore", "pandas.Int64Index", FutureWarning, "xgboost")
 log.basicConfig(level=log.INFO, format="%(asctime)s:%(levelname)s:%(message)s")
 
 
-def train(config):
-    conn = data_loader.connect(config)
+def train(cfg: config.Config):
+    conn = data_loader.connect(cfg)
     start_date = datetime.datetime.strptime("2021-01-01", "%Y-%m-%d")
     now = datetime.datetime.now()
-    reattempt_date = now - datetime.timedelta(days=config.reattempt_training_days)
+    reattempt_date = now - datetime.timedelta(days=cfg.reattempt_training_days)
     end_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
     model_trainer.train_pending_models(conn, start_date, end_date, reattempt_date)
 
 
-def infer(config):
-    conn = data_loader.connect(config)
-    model_runner.start_runner(
-        conn, config.runner_process_count, config.nats_host, config.rmse_margin
-    )
+def infer(cfg: config.Config):
+    model_runner.start_runner(cfg)
 
 
 if __name__ == "__main__":
@@ -43,10 +40,10 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    config = load_config()
-    log.info(f"Using config: {config}")
+    cfg = config.load_config()
+    log.info(f"Using config: {cfg}")
 
     if args.mode == "train":
-        train(config)
+        train(cfg)
     if args.mode == "infer":
-        infer(config)
+        infer(cfg)
