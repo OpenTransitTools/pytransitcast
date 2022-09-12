@@ -105,7 +105,7 @@ class ChildrenProcesses:
             self.process_ready_queue.get()
             waiting_readied_processes -= 1
 
-        log.info(f"{len(self.children)} children processes initialized")
+        log.info(f"{len(self.children)} children processes started")
 
     def terminate_children(self):
         for _, child in enumerate(self.children):

@@ -192,7 +192,8 @@ def get_relevant_models(conn, rmse_margin: int, callback):
        model_blob
 from ml_model
 where trained_timestamp is not null
-                         and train_flag = False
+                         and train_flag = false
+                         and currently_relevant = true
                          and avg_rmse - ml_rmse > %s"""
 
     cursor = conn.cursor()
